@@ -11,7 +11,7 @@ jobs:
       - name: 1. Inštalácia WireGuardu
         run: |
           sudo apt-get update
-          sudo apt-get install -y wireguard openresolv curl
+          sudo apt-get install -y wireguard curl
 
       - name: 2. Vytvorenie WireGuard profilu
         run: |
