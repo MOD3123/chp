@@ -4,7 +4,6 @@ RUN apk add --no-cache \
     ca-certificates \
     curl \
     tar \
-    gettext \
     python3
 
 ARG WIREPROXY_VERSION=1.1.3
