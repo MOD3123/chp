@@ -1,3 +1,8 @@
+
+### Oprav celý `Dockerfile`
+
+V GitHub repozitári `MOD3123/chp` teda nastav `Dockerfile` presne na toto:
+
 ```dockerfile
 FROM alpine:3.22
 
@@ -5,6 +10,7 @@ RUN apk add --no-cache \
     ca-certificates \
     curl \
     tar \
+    gettext \
     python3
 
 ARG WIREPROXY_VERSION=1.1.2
@@ -21,10 +27,6 @@ WORKDIR /app
 COPY server.py .
 COPY wireproxy.conf .
 
-ENV PORT=10000
 ENV SOCKS5_PORT=1080
 
-EXPOSE 10000
-
-CMD ["python3", "/app/server.py"]
-```
+CMD ["sh", "-c", "envsubst < /app/wireproxy.conf > /tmp/wireproxy.conf && wireproxy -c /tmp/wireproxy.conf & exec python3 /app/server.py"]
