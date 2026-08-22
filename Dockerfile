@@ -4,6 +4,8 @@ RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
 
+RUN pip install --no-cache-dir aiohttp aiohttp-socks
+
 COPY server.py .
 
 ENV PYTHONUNBUFFERED=1
