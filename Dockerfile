@@ -7,7 +7,7 @@ RUN apk add --no-cache \
     gettext \
     python3
 
-ARG WIREPROXY_VERSION=1.1.2
+ARG WIREPROXY_VERSION=1.1.3
 
 RUN curl -fL \
     "https://github.com/windtf/wireproxy/releases/download/v${WIREPROXY_VERSION}/wireproxy_linux_amd64.tar.gz" \
@@ -23,4 +23,4 @@ COPY wireproxy.conf .
 
 ENV SOCKS5_PORT=1080
 
-CMD ["sh", "-c", "envsubst < /app/wireproxy.conf > /tmp/wireproxy.conf && wireproxy -c /tmp/wireproxy.conf & exec python3 /app/server.py"]
+CMD ["python3", "/app/server.py"]
