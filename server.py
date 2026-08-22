@@ -16,7 +16,7 @@ RUNTIME_CONFIG = "/tmp/wireproxy.conf"
 
 MAX_BODY_SIZE = 50 * 1024 * 1024
 
-HOP_BY_HOP = {
+HOP_BY_HOP_HEADERS = {
     "connection",
     "keep-alive",
     "proxy-authenticate",
@@ -28,12 +28,20 @@ HOP_BY_HOP = {
 }
 
 
-def log(msg):
-    print(msg, flush=True)
+def log(message):
+    print(message, flush=True)
 
+
+# ============================================================
+# WIREPROXY
+# ============================================================
 
 def start_wireproxy():
-    private_key = os.environ.get("WG_PRIVATE_KEY", "").strip()
+
+    private_key = os.environ.get(
+        "WG_PRIVATE_KEY",
+        ""
+    ).strip()
 
     if not private_key:
         raise RuntimeError(
@@ -42,7 +50,11 @@ def start_wireproxy():
 
     log("WG_PRIVATE_KEY detected")
 
-    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+    with open(
+        CONFIG_FILE,
+        "r",
+        encoding="utf-8"
+    ) as f:
         config = f.read()
 
     if "[Interface]" not in config:
@@ -50,16 +62,25 @@ def start_wireproxy():
             "wireproxy.conf does not contain [Interface]"
         )
 
+    # Private key vložíme až do runtime configu.
+    # Skutočný private key teda nie je v GitHube.
     config = config.replace(
         "[Interface]",
         "[Interface]\nPrivateKey = " + private_key,
-        1,
+        1
     )
 
-    with open(RUNTIME_CONFIG, "w", encoding="utf-8") as f:
+    with open(
+        RUNTIME_CONFIG,
+        "w",
+        encoding="utf-8"
+    ) as f:
         f.write(config)
 
-    os.chmod(RUNTIME_CONFIG, 0o600)
+    os.chmod(
+        RUNTIME_CONFIG,
+        0o600
+    )
 
     log("Starting wireproxy...")
 
@@ -67,22 +88,28 @@ def start_wireproxy():
         [
             "wireproxy",
             "-c",
-            RUNTIME_CONFIG,
+            RUNTIME_CONFIG
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        bufsize=1,
+        bufsize=1
     )
 
-    def wireproxy_logs():
+    def wireproxy_logger():
+
         if process.stdout:
+
             for line in process.stdout:
-                log("[wireproxy] " + line.rstrip())
+
+                log(
+                    "[wireproxy] "
+                    + line.rstrip()
+                )
 
     threading.Thread(
-        target=wireproxy_logs,
-        daemon=True,
+        target=wireproxy_logger,
+        daemon=True
     ).start()
 
     deadline = time.time() + 30
@@ -90,36 +117,57 @@ def start_wireproxy():
     while time.time() < deadline:
 
         if process.poll() is not None:
+
             raise RuntimeError(
-                f"wireproxy exited with code {process.returncode}"
+                "wireproxy exited with code "
+                f"{process.returncode}"
             )
 
         try:
+
             with socket.create_connection(
-                ("127.0.0.1", SOCKS5_PORT),
-                timeout=1,
+                (
+                    "127.0.0.1",
+                    SOCKS5_PORT
+                ),
+                timeout=1
             ):
+
                 log(
-                    f"SOCKS5 ready on "
+                    "SOCKS5 ready on "
                     f"127.0.0.1:{SOCKS5_PORT}"
                 )
+
                 return process
 
         except OSError:
+
             time.sleep(0.5)
 
-    process.terminate()
+    try:
+        process.terminate()
+    except Exception:
+        pass
 
     raise RuntimeError(
-        "wireproxy SOCKS5 did not start within 30 seconds"
+        "wireproxy SOCKS5 did not start "
+        "within 30 seconds"
     )
 
 
+# ============================================================
+# SOCKS5
+# ============================================================
+
 def recv_exact(sock, length):
+
     data = b""
 
     while len(data) < length:
-        chunk = sock.recv(length - len(data))
+
+        chunk = sock.recv(
+            length - len(data)
+        )
 
         if not chunk:
             raise ConnectionError(
@@ -134,34 +182,52 @@ def recv_exact(sock, length):
 def socks5_connect(host, port):
 
     log(
-        f"SOCKS5 connecting to "
+        f"[SOCKS5] connecting to "
         f"{host}:{port}"
     )
 
     sock = socket.create_connection(
-        ("127.0.0.1", SOCKS5_PORT),
-        timeout=30,
+        (
+            "127.0.0.1",
+            SOCKS5_PORT
+        ),
+        timeout=30
     )
 
+    # --------------------------------------------------------
     # SOCKS5 greeting
+    # --------------------------------------------------------
+
     sock.sendall(
         b"\x05\x01\x00"
     )
 
-    response = recv_exact(sock, 2)
+    response = recv_exact(
+        sock,
+        2
+    )
 
     if response != b"\x05\x00":
+
         sock.close()
 
         raise RuntimeError(
             "SOCKS5 authentication negotiation failed"
         )
 
-    # SOCKS5 CONNECT using hostname.
-    # wireproxy performs the remote resolution.
-    hostname = host.encode("idna")
+    # --------------------------------------------------------
+    # SOCKS5 CONNECT
+    #
+    # Používame DOMAINNAME namiesto lokálneho DNS.
+    # Tým zabránime tomu, aby Render riešil cieľový hostname.
+    # --------------------------------------------------------
+
+    hostname = host.encode(
+        "idna"
+    )
 
     if len(hostname) > 255:
+
         sock.close()
 
         raise RuntimeError(
@@ -169,20 +235,27 @@ def socks5_connect(host, port):
         )
 
     request = (
-        b"\x05"
-        b"\x01"
-        b"\x00"
-        b"\x03"
+        b"\x05"          # version
+        b"\x01"          # CONNECT
+        b"\x00"          # reserved
+        b"\x03"          # DOMAINNAME
         + bytes([len(hostname)])
         + hostname
-        + int(port).to_bytes(2, "big")
+        + int(port).to_bytes(
+            2,
+            "big"
+        )
     )
 
     sock.sendall(request)
 
-    response = recv_exact(sock, 4)
+    response = recv_exact(
+        sock,
+        4
+    )
 
     if response[0] != 5:
+
         sock.close()
 
         raise RuntimeError(
@@ -192,72 +265,137 @@ def socks5_connect(host, port):
     reply = response[1]
 
     if reply != 0:
+
         sock.close()
 
+        messages = {
+            1: "general SOCKS server failure",
+            2: "connection not allowed",
+            3: "network unreachable",
+            4: "host unreachable",
+            5: "connection refused",
+            6: "TTL expired",
+            7: "command not supported",
+            8: "address type not supported",
+        }
+
         raise RuntimeError(
-            f"SOCKS5 CONNECT failed: {reply}"
+            "SOCKS5 CONNECT failed: "
+            f"{reply} - "
+            f"{messages.get(reply, 'unknown error')}"
         )
+
+    # --------------------------------------------------------
+    # Consume BND.ADDR + BND.PORT
+    # --------------------------------------------------------
 
     address_type = response[3]
 
     if address_type == 1:
+
+        # IPv4
         recv_exact(sock, 4)
 
     elif address_type == 3:
-        length = recv_exact(sock, 1)[0]
-        recv_exact(sock, length)
+
+        # Domain
+        length = recv_exact(
+            sock,
+            1
+        )[0]
+
+        recv_exact(
+            sock,
+            length
+        )
 
     elif address_type == 4:
-        recv_exact(sock, 16)
+
+        # IPv6
+        recv_exact(
+            sock,
+            16
+        )
 
     else:
+
         sock.close()
 
         raise RuntimeError(
-            f"Unknown SOCKS5 address type: {address_type}"
+            "Unknown SOCKS5 address type: "
+            f"{address_type}"
         )
 
-    recv_exact(sock, 2)
+    recv_exact(
+        sock,
+        2
+    )
 
     log(
-        f"SOCKS5 connected to "
+        f"[SOCKS5] connected to "
         f"{host}:{port}"
     )
 
     return sock
 
 
+# ============================================================
+# HTTP HELPERS
+# ============================================================
+
 def get_header(headers, name):
+
     wanted = name.lower()
 
     for key, value in headers.items():
+
         if key.lower() == wanted:
             return value
 
     return None
 
 
-def send_error(handler, code, message):
+def send_error(
+    handler,
+    status_code,
+    message
+):
 
     body = (
         message + "\n"
-    ).encode("utf-8")
+    ).encode(
+        "utf-8"
+    )
 
     response = (
-        f"HTTP/1.1 {code} {message}\r\n"
-        f"Content-Type: text/plain; charset=utf-8\r\n"
+        f"HTTP/1.1 {status_code} {message}\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
         f"Content-Length: {len(body)}\r\n"
-        f"Connection: close\r\n"
-        f"\r\n"
-    ).encode("iso-8859-1")
+        "Connection: close\r\n"
+        "\r\n"
+    ).encode(
+        "iso-8859-1"
+    )
 
     try:
-        handler.wfile.write(response)
-        handler.wfile.write(body)
+
+        handler.wfile.write(
+            response
+        )
+
+        handler.wfile.write(
+            body
+        )
+
         handler.wfile.flush()
+
     except Exception:
         pass
 
+
+# ============================================================
+# HTTP PROXY
+# ============================================================
 
 class ProxyHandler(
     socketserver.StreamRequestHandler
@@ -269,31 +407,47 @@ class ProxyHandler(
 
         try:
 
+            # ------------------------------------------------
+            # Request line
+            # ------------------------------------------------
+
             request_line = (
                 self.rfile
                 .readline()
-                .decode("iso-8859-1")
-                .rstrip("\r\n")
+                .decode(
+                    "iso-8859-1"
+                )
+                .rstrip(
+                    "\r\n"
+                )
             )
 
             if not request_line:
                 return
 
-            parts = request_line.split(" ", 2)
+            parts = request_line.split(
+                " ",
+                2
+            )
 
             if len(parts) != 3:
+
                 send_error(
                     self,
                     400,
-                    "Invalid HTTP request",
+                    "Invalid HTTP request"
                 )
+
                 return
 
             method = parts[0]
             request_target = parts[1]
             http_version = parts[2]
 
+            # ------------------------------------------------
             # Render health check
+            # ------------------------------------------------
+
             if (
                 method == "GET"
                 and request_target == "/"
@@ -304,18 +458,27 @@ class ProxyHandler(
                 response = (
                     b"HTTP/1.1 200 OK\r\n"
                     b"Content-Type: text/plain\r\n"
-                    + f"Content-Length: {len(body)}\r\n".encode()
+                    + (
+                        f"Content-Length: "
+                        f"{len(body)}\r\n"
+                    ).encode()
                     + b"Connection: close\r\n"
                     b"\r\n"
                     + body
                 )
 
-                self.wfile.write(response)
+                self.wfile.write(
+                    response
+                )
+
                 self.wfile.flush()
 
                 return
 
+            # ------------------------------------------------
             # Headers
+            # ------------------------------------------------
+
             headers = {}
 
             while True:
@@ -323,52 +486,74 @@ class ProxyHandler(
                 line = (
                     self.rfile
                     .readline()
-                    .decode("iso-8859-1")
+                    .decode(
+                        "iso-8859-1"
+                    )
                 )
 
-                if line in ("", "\r\n", "\n"):
+                if line in (
+                    "",
+                    "\r\n",
+                    "\n"
+                ):
                     break
 
                 if ":" not in line:
                     continue
 
-                key, value = line.split(":", 1)
+                key, value = line.split(
+                    ":",
+                    1
+                )
 
-                headers[key.strip()] = value.strip()
+                headers[
+                    key.strip()
+                ] = value.strip()
 
-            # ?url=
-            parsed = urlparse(request_target)
+            # ------------------------------------------------
+            # URL parameter
+            #
+            # https://server/?url=https://example.com/api
+            # ------------------------------------------------
+
+            parsed = urlparse(
+                request_target
+            )
 
             query = parse_qs(
                 parsed.query,
-                keep_blank_values=True,
+                keep_blank_values=True
             )
 
-            urls = query.get("url")
+            urls = query.get(
+                "url"
+            )
 
             if not urls:
 
                 send_error(
                     self,
                     400,
-                    "Missing ?url= parameter",
+                    "Missing ?url= parameter"
                 )
 
                 return
 
             target_url = urls[0]
 
-            target = urlparse(target_url)
+            target = urlparse(
+                target_url
+            )
 
             if target.scheme not in (
                 "http",
-                "https",
+                "https"
             ):
 
                 send_error(
                     self,
                     400,
-                    "Only http and https URLs are supported",
+                    "Only http and https URLs are supported"
                 )
 
                 return
@@ -378,51 +563,87 @@ class ProxyHandler(
                 send_error(
                     self,
                     400,
-                    "Target URL has no hostname",
+                    "Target URL has no hostname"
                 )
 
                 return
 
             host = target.hostname
 
+            # ------------------------------------------------
+            # Port
+            # ------------------------------------------------
+
             if target.port:
+
                 port = target.port
+
             elif target.scheme == "https":
+
                 port = 443
+
             else:
+
                 port = 80
 
-            path = target.path or "/"
+            # ------------------------------------------------
+            # Path + query
+            # ------------------------------------------------
 
-            if target.query:
-                path += "?" + target.query
-
-            log(
-                f"[request] {method} "
-                f"{target.scheme}://{host}:{port}{path}"
+            path = (
+                target.path
+                or "/"
             )
 
-            # Body
+            if target.query:
+
+                path += (
+                    "?"
+                    + target.query
+                )
+
+            log(
+                f"[REQUEST] "
+                f"{method} "
+                f"{target.scheme}://"
+                f"{host}:{port}"
+                f"{path}"
+            )
+
+            log(
+                f"[ROUTE] "
+                f"{host}:{port} "
+                f"-> SOCKS5 "
+                f"127.0.0.1:{SOCKS5_PORT}"
+            )
+
+            # ------------------------------------------------
+            # Request body
+            # ------------------------------------------------
+
             body = b""
 
             content_length = get_header(
                 headers,
-                "Content-Length",
+                "Content-Length"
             )
 
             transfer_encoding = get_header(
                 headers,
-                "Transfer-Encoding",
+                "Transfer-Encoding"
             )
 
-            if transfer_encoding and (
-                "chunked" in transfer_encoding.lower()
+            if (
+                transfer_encoding
+                and
+                "chunked"
+                in transfer_encoding.lower()
             ):
 
                 send_error(
                     self,
                     501,
-                    "Chunked request bodies are not supported",
+                    "Chunked request bodies are not supported"
                 )
 
                 return
@@ -430,13 +651,17 @@ class ProxyHandler(
             if content_length:
 
                 try:
-                    length = int(content_length)
+
+                    length = int(
+                        content_length
+                    )
+
                 except ValueError:
 
                     send_error(
                         self,
                         400,
-                        "Invalid Content-Length",
+                        "Invalid Content-Length"
                     )
 
                     return
@@ -446,53 +671,81 @@ class ProxyHandler(
                     send_error(
                         self,
                         413,
-                        "Request body too large",
+                        "Request body too large"
                     )
 
                     return
 
-                body = self.rfile.read(length)
+                body = self.rfile.read(
+                    length
+                )
 
                 if len(body) != length:
 
                     send_error(
                         self,
                         400,
-                        "Incomplete request body",
+                        "Incomplete request body"
                     )
 
                     return
 
-            # SOCKS5
+            # ------------------------------------------------
+            # CONNECT THROUGH WIREPROXY
+            # ------------------------------------------------
+
             upstream = socks5_connect(
                 host,
-                port,
+                port
             )
 
+            # ------------------------------------------------
             # HTTPS TLS
+            #
+            # TLS ide cez SOCKS5 connection.
+            # SNI = pôvodný hostname.
+            # ------------------------------------------------
+
             if target.scheme == "https":
 
                 log(
-                    f"[tls] Starting TLS for {host}"
+                    f"[TLS] "
+                    f"starting TLS "
+                    f"SNI={host}"
                 )
 
-                context = ssl.create_default_context()
+                context = (
+                    ssl.create_default_context()
+                )
 
-                upstream = context.wrap_socket(
-                    upstream,
-                    server_hostname=host,
+                upstream = (
+                    context.wrap_socket(
+                        upstream,
+                        server_hostname=host
+                    )
                 )
 
                 log(
-                    f"[tls] TLS established for {host}"
+                    f"[TLS] established "
+                    f"for {host}"
                 )
 
-            # HTTP request
-            outgoing = (
-                f"{method} {path} {http_version}\r\n"
-            ).encode("iso-8859-1")
+            # ------------------------------------------------
+            # Build upstream HTTP request
+            # ------------------------------------------------
 
-            # Host
+            outgoing = (
+                f"{method} "
+                f"{path} "
+                f"{http_version}\r\n"
+            ).encode(
+                "iso-8859-1"
+            )
+
+            # ------------------------------------------------
+            # Host header
+            # ------------------------------------------------
+
             host_header = host
 
             if (
@@ -502,13 +755,24 @@ class ProxyHandler(
                 target.scheme == "https"
                 and port != 443
             ):
-                host_header += f":{port}"
+
+                host_header += (
+                    f":{port}"
+                )
 
             outgoing += (
-                f"Host: {host_header}\r\n"
-            ).encode("iso-8859-1")
+                f"Host: "
+                f"{host_header}\r\n"
+            ).encode(
+                "iso-8859-1"
+            )
 
-            # Preserve headers
+            # ------------------------------------------------
+            # Forward original headers
+            #
+            # Authorization / Bearer is preserved.
+            # ------------------------------------------------
+
             for key, value in headers.items():
 
                 lower = key.lower()
@@ -516,7 +780,7 @@ class ProxyHandler(
                 if lower == "host":
                     continue
 
-                if lower in HOP_BY_HOP:
+                if lower in HOP_BY_HOP_HEADERS:
                     continue
 
                 if lower == "content-length":
@@ -527,13 +791,29 @@ class ProxyHandler(
 
                 outgoing += (
                     f"{key}: {value}\r\n"
-                ).encode("iso-8859-1")
+                ).encode(
+                    "iso-8859-1"
+                )
 
-            if body or content_length is not None:
+            # ------------------------------------------------
+            # Content-Length
+            # ------------------------------------------------
+
+            if (
+                body
+                or content_length is not None
+            ):
 
                 outgoing += (
-                    f"Content-Length: {len(body)}\r\n"
-                ).encode("iso-8859-1")
+                    f"Content-Length: "
+                    f"{len(body)}\r\n"
+                ).encode(
+                    "iso-8859-1"
+                )
+
+            # ------------------------------------------------
+            # Close upstream after response
+            # ------------------------------------------------
 
             outgoing += (
                 b"Connection: close\r\n"
@@ -542,15 +822,24 @@ class ProxyHandler(
 
             outgoing += body
 
+            # ------------------------------------------------
+            # Send
+            # ------------------------------------------------
+
             log(
-                f"[upstream] Sending {method}"
+                f"[UPSTREAM] "
+                f"sending {method} "
+                f"to {host}"
             )
 
             upstream.sendall(
                 outgoing
             )
 
-            # Response
+            # ------------------------------------------------
+            # Relay response
+            # ------------------------------------------------
+
             total = 0
 
             while True:
@@ -562,14 +851,19 @@ class ProxyHandler(
                 if not data:
                     break
 
-                total += len(data)
+                total += len(
+                    data
+                )
 
-                self.wfile.write(data)
+                self.wfile.write(
+                    data
+                )
+
                 self.wfile.flush()
 
             log(
-                f"[upstream] Response: "
-                f"{total} bytes"
+                f"[UPSTREAM] "
+                f"response={total} bytes"
             )
 
         except ssl.SSLError as exc:
@@ -581,32 +875,33 @@ class ProxyHandler(
             send_error(
                 self,
                 502,
-                "TLS connection failed",
+                "TLS connection failed"
             )
 
         except socket.timeout:
 
             log(
-                "[ERROR] Upstream timeout"
+                "[ERROR] upstream timeout"
             )
 
             send_error(
                 self,
                 504,
-                "Gateway Timeout",
+                "Gateway Timeout"
             )
 
         except Exception as exc:
 
             log(
                 f"[ERROR] "
-                f"{type(exc).__name__}: {exc}"
+                f"{type(exc).__name__}: "
+                f"{exc}"
             )
 
             send_error(
                 self,
                 502,
-                "Bad Gateway",
+                "Bad Gateway"
             )
 
         finally:
@@ -619,6 +914,10 @@ class ProxyHandler(
                     pass
 
 
+# ============================================================
+# SERVER
+# ============================================================
+
 class ProxyServer(
     socketserver.ThreadingTCPServer
 ):
@@ -630,33 +929,81 @@ class ProxyServer(
 def main():
 
     log(
-        f"Starting proxy on "
-        f"0.0.0.0:{PORT}"
-    )
-
-    wireproxy = start_wireproxy()
-
-    server = ProxyServer(
-        ("0.0.0.0", PORT),
-        ProxyHandler,
+        "========================================"
     )
 
     log(
-        f"HTTP server listening on "
+        "CHP proxy starting"
+    )
+
+    log(
+        f"HTTP PORT={PORT}"
+    )
+
+    log(
+        f"SOCKS5 PORT={SOCKS5_PORT}"
+    )
+
+    log(
+        "========================================"
+    )
+
+    # --------------------------------------------------------
+    # Start WireGuard userspace proxy
+    # --------------------------------------------------------
+
+    wireproxy = start_wireproxy()
+
+    # --------------------------------------------------------
+    # Start HTTP server
+    # --------------------------------------------------------
+
+    server = ProxyServer(
+        (
+            "0.0.0.0",
+            PORT
+        ),
+        ProxyHandler
+    )
+
+    log(
+        f"HTTP proxy listening on "
         f"0.0.0.0:{PORT}"
     )
 
     try:
+
         server.serve_forever()
+
+    except KeyboardInterrupt:
+
+        pass
 
     finally:
 
-        server.server_close()
+        log(
+            "Stopping HTTP proxy..."
+        )
 
         try:
-            wireproxy.terminate()
-            wireproxy.wait(timeout=5)
+            server.server_close()
         except Exception:
+            pass
+
+        log(
+            "Stopping wireproxy..."
+        )
+
+        try:
+
+            wireproxy.terminate()
+
+            wireproxy.wait(
+                timeout=5
+            )
+
+        except Exception:
+
             try:
                 wireproxy.kill()
             except Exception:
