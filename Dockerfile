@@ -1,9 +1,3 @@
-
-### Oprav celý `Dockerfile`
-
-V GitHub repozitári `MOD3123/chp` teda nastav `Dockerfile` presne na toto:
-
-```dockerfile
 FROM alpine:3.22
 
 RUN apk add --no-cache \
