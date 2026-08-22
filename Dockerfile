@@ -1,25 +1,12 @@
-FROM alpine:3.22
+FROM python:3.12-alpine
 
-RUN apk add --no-cache \
-    ca-certificates \
-    curl \
-    tar \
-    python3
-
-ARG WIREPROXY_VERSION=1.1.3
-
-RUN curl -fL \
-    "https://github.com/windtf/wireproxy/releases/download/v${WIREPROXY_VERSION}/wireproxy_linux_amd64.tar.gz" \
-    -o /tmp/wireproxy.tar.gz \
-    && tar -xzf /tmp/wireproxy.tar.gz -C /usr/local/bin \
-    && chmod +x /usr/local/bin/wireproxy \
-    && rm /tmp/wireproxy.tar.gz
+RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
 
 COPY server.py .
-COPY wireproxy.conf .
 
-ENV SOCKS5_PORT=1080
+ENV PYTHONUNBUFFERED=1
+ENV PORT=10000
 
 CMD ["python3", "/app/server.py"]
